@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "entity": "firm",
+  "period": "year",
+  "periods": [
+    "2021",
+    "2022",
+    "2023"
+  ],
+  "numeric": {
+    "assets": {
+      "min": 0,
+      "allow_negative": false
+    },
+    "profit": {
+      "allow_negative": true
+    },
+    "digital_share": {
+      "min": 0,
+      "max": 1
+    }
+  },
+  "units": {
+    "money_unit": "CNY_million"
+  }
+}

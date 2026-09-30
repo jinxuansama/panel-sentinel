@@ -1,0 +1,7 @@
+firm,year,assets,profit,digital_share,money_unit
+synthetic_A,2021,100,-2,0.10,CNY_million
+synthetic_A,2022,110,3,0.12,CNY_million
+synthetic_A,2023,120,5,0.15,CNY_million
+synthetic_B,2021,90,1,0.08,CNY_million
+synthetic_B,2022,95,2,0.09,CNY_million
+synthetic_B,2023,105,4,0.11,CNY_million

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "ok": true,
+  "csv_sha256": "1c70106180263ffb6915c8fc3ab0f1701fd4c461cbd881ab63ddd21513cbff7a",
+  "schema_sha256": "130093481da583b72f16c3ed926d1c11f5d44ac42cee7714b3612d2341b30520",
+  "row_count": 6,
+  "entity_count": 2,
+  "unique_key_count": 6,
+  "missing_numeric": {
+    "assets": 0,
+    "profit": 0,
+    "digital_share": 0
+  },
+  "gaps": {
+    "synthetic_A": [],
+    "synthetic_B": []
+  },
+  "within_variation": {
+    "assets": {
+      "entities_with_two_observations": 2,
+      "constant_entities": []
+    },
+    "profit": {
+      "entities_with_two_observations": 2,
+      "constant_entities": []
+    },
+    "digital_share": {
+      "entities_with_two_observations": 2,
+      "constant_entities": []
+    }
+  },
+  "issues": []
+}
