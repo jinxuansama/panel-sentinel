@@ -49,8 +49,13 @@ not compute DEA/MSBM, establish causality, diagnose statistical power, infer
 undisclosed units, or certify that reported financial figures are accurate.
 A constant variable warning is a review prompt, not proof of model failure.
 Unbalanced panels may be intentional; gaps are warnings by default.
-The tool cannot discover entities wholly absent from a CSV.
+Without an expected-entity registry, the tool cannot discover entities wholly
+absent from a CSV. Add an optional `"entities": ["synthetic_A", "synthetic_B"]`
+to the schema to check a known population. Missing entities and their missing
+periods are warnings (`--strict` fails); entities outside that list are errors.
+Observed counts are not inflated by absent entities. Labels are case-sensitive
+and trimmed; the registry must come from an independently checked source.
 
-Initial version 0.1.0; MIT licensed, with original synthetic examples.
+Version 0.2.0; MIT licensed, with original synthetic examples.
 AI assisted implementation and tests. No institutional endorsement or
 adoption metrics are claimed. [Roadmap](docs/roadmap.md).

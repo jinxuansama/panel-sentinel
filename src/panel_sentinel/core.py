@@ -22,7 +22,7 @@ def _decimal(value, label):
 def validate_schema(schema: object) -> dict:
     if not isinstance(schema, dict):
         raise ValueError("schema must be an object")
-    allowed = {"version", "entity", "period", "periods", "numeric", "units", "missing_tokens"}
+    allowed = {"version", "entity", "entities", "period", "periods", "numeric", "units", "missing_tokens"}
     if set(schema) - allowed:
         raise ValueError(f"unknown schema fields: {sorted(set(schema) - allowed)}")
     if schema.get("version") != 1:
@@ -56,6 +56,17 @@ def validate_schema(schema: object) -> dict:
     tokens = schema.get("missing_tokens", ["", "NA", "N/A", "null"])
     if not isinstance(tokens, list) or any(not isinstance(t, str) for t in tokens):
         raise ValueError("missing_tokens must be a list of strings")
+    if "entities" in schema:
+        registry = schema["entities"]
+        if not isinstance(registry, list) or not registry or any(
+            not isinstance(e, str) or not e.strip() for e in registry
+        ):
+            raise ValueError("entities must be a non-empty list of strings")
+        labels = [e.strip() for e in registry]
+        if len(set(labels)) != len(labels):
+            raise ValueError("entities must be unique after trimming")
+        if set(labels) & {t.strip() for t in tokens}:
+            raise ValueError("entities cannot contain missing tokens")
     return schema
 
 
@@ -80,6 +91,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     missing = Counter()
     missing_tokens = {t.strip() for t in schema.get("missing_tokens", ["", "NA", "N/A", "null"])}
     expected_periods = set(schema["periods"])
+    expected_entities = {e.strip() for e in schema["entities"]} if "entities" in schema else None
     row_count = 0
 
     def issue(code, message, row=None, column=None, entity=None, severity="error"):
@@ -93,6 +105,8 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
             continue
         entity = record[schema["entity"]].strip()
         period = record[schema["period"]].strip()
+        if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
+            issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
         if entity in missing_tokens or period in missing_tokens:
             issue("missing_key", "entity and period must be present", row)
         else:
@@ -129,8 +143,13 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     if not row_count:
         issue("empty_panel", "CSV contains no data rows")
     gaps = {}
-    for entity in sorted(entities):
-        gaps[entity] = [p for p in schema["periods"] if p not in entities[entity]]
+    gap_entities = set(entities) | (expected_entities or set())
+    for entity in sorted(gap_entities):
+        observed_periods = entities.get(entity, set())
+        gaps[entity] = [p for p in schema["periods"] if p not in observed_periods]
+        if entity not in entities:
+            issue("missing_entity", "no valid entity-period keys for expected entity",
+                  entity=entity, severity="warning")
         if gaps[entity]:
             issue("panel_gap", f"missing periods: {', '.join(gaps[entity])}", entity=entity, severity="warning")
     variation = {}

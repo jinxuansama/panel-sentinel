@@ -1,8 +1,12 @@
+import contextlib
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from panel_sentinel.core import audit_csv, validate_schema
+from panel_sentinel.cli import main
 
 
 class PanelTests(unittest.TestCase):
@@ -67,6 +71,54 @@ class PanelTests(unittest.TestCase):
 
     def test_unexpected_period(self):
         self.assertIn("unexpected_period", self.codes(self.audit("A,2030,2,0.1,CNY_million\n")))
+
+    def test_wholly_absent_entity_has_all_gaps_without_inflating_count(self):
+        self.schema["entities"] = ["A", "B"]
+        report = self.audit("A,2021,2,0.1,CNY_million\nA,2022,3,0.2,CNY_million\n")
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["entity_count"], 1)
+        self.assertEqual(report["gaps"], {"A": [], "B": ["2021", "2022"]})
+        missing = [i for i in report["issues"] if i["code"] == "missing_entity"]
+        self.assertEqual([i["entity"] for i in missing], ["B"])
+        self.assertEqual(missing[0]["severity"], "warning")
+
+    def test_unexpected_entity_is_error_and_kept_in_observed_counts(self):
+        self.schema["entities"] = ["B"]
+        report = self.audit("A,2021,2,0.1,CNY_million\n")
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["entity_count"], 1)
+        self.assertIn("unexpected_entity", self.codes(report))
+
+    def test_registry_matches_trimmed_labels_without_mutating_schema(self):
+        self.schema["entities"] = [" A "]
+        report = self.audit(" A ,2021,2,0.1,CNY_million\nA,2022,3,0.2,CNY_million\n")
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(self.schema["entities"], [" A "])
+
+    def test_invalid_registries_rejected(self):
+        for registry in (None, "A", [], [1], [""], [" "], ["A", " A "], ["NA"]):
+            with self.subTest(registry=registry), self.assertRaises(ValueError):
+                validate_schema(dict(self.schema, entities=registry))
+
+    def test_registry_rejects_custom_missing_token(self):
+        with self.assertRaises(ValueError):
+            validate_schema(dict(self.schema, entities=[" missing "], missing_tokens=["missing"]))
+
+    def test_invalid_key_does_not_satisfy_registry(self):
+        self.schema["entities"] = ["A"]
+        report = self.audit("A,,2,0.1,CNY_million\n")
+        self.assertIn("missing_entity", self.codes(report))
+        self.assertEqual(report["entity_count"], 0)
+
+    def test_registry_cli_strict_exit_and_reproducibility(self):
+        self.schema["entities"] = ["A", "B"]
+        report = self.audit("A,2021,2,0.1,CNY_million\nA,2022,3,0.2,CNY_million\n")
+        self.assertEqual(report, audit_csv(self.file, self.schema))
+        schema_file = Path(self.temp.name) / "schema.json"
+        schema_file.write_text(json.dumps(self.schema), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main([str(self.file), "--schema", str(schema_file)]), 0)
+            self.assertEqual(main([str(self.file), "--schema", str(schema_file), "--strict"]), 1)
 
 
 if __name__ == "__main__":

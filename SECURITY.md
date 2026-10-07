@@ -1,6 +1,6 @@
 # Security
 
-Version 0.1.x is the initial supported series. This is an early project,
+Version 0.2.x is the currently supported series. This is an early project,
 not a security-certified product. The CLI does not request API keys or
 make network calls. Treat input files as untrusted and avoid processing
 extremely large files in privileged environments.
