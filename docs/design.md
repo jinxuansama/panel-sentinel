@@ -21,6 +21,13 @@ become duplicates after trimming, or match a configured missing token, are
 invalid schema input. Gap lists use trimmed labels in schema order. These
 comparisons do not modify the input schema or its digest.
 
+The CLI reads JSON fractional and exponent-form numbers as exact Decimals,
+so inclusive numeric bounds retain their stated precision. The Python API
+also accepts Decimal or numeric-string bounds; when loading JSON, use
+`json.load(file, parse_float=Decimal)`. A Python float has already been rounded
+and the audit cannot recover its original decimal digits. Numeric JSON values
+remain numbers for schema type validation.
+
 Expected periods refer to each observed entity and, when `entities` is given,
 each registered entity. An expected entity with no valid entity-period key gets
 a `missing_entity` warning and a `panel_gap` listing all expected periods.
@@ -42,5 +49,9 @@ are invalid input, and short/long records are errors. Empty panels fail.
 The unit check validates a label, not the arithmetic scale of its numbers.
 
 CSV digest covers exact bytes; schema digest covers sorted compact UTF-8
-JSON. Reports contain no current timestamps and are reproducible. The CSV
+JSON. Decimal values are emitted as unquoted JSON numbers using their Decimal
+string form, preserving precision, scale, and the distinction from strings.
+Compared with earlier CLI versions, schema hashes can change for decimal or
+exponent-form bounds previously rounded or reformatted as binary floats.
+Reports contain no current timestamps and are reproducible. The CSV
 is read into memory. This version offers no database connectors or Excel parsing.

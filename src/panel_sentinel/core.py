@@ -19,6 +19,22 @@ def _decimal(value, label):
     return result
 
 
+def _canonical_json(value):
+    """Emit exact Decimal numbers without changing JSON number/string types."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("schema decimals must be finite")
+        return str(value)
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            json.dumps(key, ensure_ascii=False) + ":" + _canonical_json(value[key])
+            for key in sorted(value)
+        ) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def validate_schema(schema: object) -> dict:
     if not isinstance(schema, dict):
         raise ValueError("schema must be an object")
@@ -165,7 +181,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
         if constant:
             issue("no_within_variation", f"constant for {len(constant)} entities; inspect suitability for within estimators",
                   column=column, severity="warning")
-    canonical_schema = json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    canonical_schema = _canonical_json(schema).encode()
     return dict(version=1, ok=not any(i["severity"] == "error" for i in issues),
                 csv_sha256=hashlib.sha256(blob).hexdigest(), schema_sha256=hashlib.sha256(canonical_schema).hexdigest(),
                 row_count=row_count, entity_count=len(entities), unique_key_count=len(keys),
