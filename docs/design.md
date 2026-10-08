@@ -1,18 +1,25 @@
 # Schema and validation semantics
 
 Schema version 1 requires `entity`, `period`, `periods` (unique non-empty
-strings), and `numeric` (column-to-rule mappings). Unknown schema fields or
+strings after trimming, excluding missing tokens), and `numeric`
+(column-to-rule mappings). Unknown schema fields or
 numeric rules are rejected to catch spelling errors.
 
 | Field | Example | Semantics |
 | --- | --- | --- |
-| periods | ["2021", "2022"] | Expected labels; not inferred from observed dates |
+| periods | ["2021", "2022"] | Expected labels, compared after trimming; not inferred from observed dates |
 | entities | ["synthetic_A", "synthetic_B"] | Optional known population; unique non-empty strings after trimming, excluding missing tokens |
 | numeric | {"profit": {"allow_negative": true}} | All declared columns must be finite decimal values |
 | min / max | 0 / 1 | Inclusive bounds, compared using Decimal |
 | allow_negative | false | Explicit negative-value prohibition; default true |
 | units | {"money_unit": "CNY_million"} | Every row must match the declared unit label exactly after trimming |
 | missing_tokens | ["", "NA", "N/A", "null"] | Case-sensitive, trimmed missing markers; these are the defaults |
+
+Period labels are case-sensitive. Leading and trailing whitespace is ignored
+in both the schema and CSV; internal whitespace is preserved. Labels that
+become duplicates after trimming, or match a configured missing token, are
+invalid schema input. Gap lists use trimmed labels in schema order. These
+comparisons do not modify the input schema or its digest.
 
 Expected periods refer to each observed entity and, when `entities` is given,
 each registered entity. An expected entity with no valid entity-period key gets

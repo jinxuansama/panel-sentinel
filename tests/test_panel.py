@@ -72,6 +72,56 @@ class PanelTests(unittest.TestCase):
     def test_unexpected_period(self):
         self.assertIn("unexpected_period", self.codes(self.audit("A,2030,2,0.1,CNY_million\n")))
 
+    def test_periods_match_trimmed_labels_without_mutating_schema(self):
+        self.schema["periods"] = [" 2021 ", "\t2022 "]
+        original = json.dumps(self.schema)
+        report = self.audit("A, 2021 ,2,0.1,CNY_million\nA,2022,3,0.2,CNY_million\n")
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["within_variation"]["profit"]["entities_with_two_observations"], 1)
+        self.assertEqual(json.dumps(self.schema), original)
+        self.assertEqual(report, audit_csv(self.file, self.schema))
+        self.schema["periods"] = ["2021", "2022"]
+        normalized = audit_csv(self.file, self.schema)
+        self.assertNotEqual(report.pop("schema_sha256"), normalized.pop("schema_sha256"))
+        self.assertEqual(report, normalized)
+
+    def test_period_gaps_use_trimmed_labels_in_schema_order(self):
+        self.schema["periods"] = [" 2023 ", " 2022 ", "2021"]
+        self.schema["entities"] = ["A", "B"]
+        report = self.audit("A,2021,2,0.1,CNY_million\n")
+        self.assertEqual(report["gaps"], {"A": ["2023", "2022"], "B": ["2023", "2022", "2021"]})
+        self.assertTrue(report["ok"])
+
+    def test_periods_reject_duplicates_after_trimming(self):
+        for periods in (["2021", " 2021 "], ["2021", "\t2021\n"]):
+            with self.subTest(periods=periods), self.assertRaisesRegex(ValueError, "unique after trimming"):
+                validate_schema(dict(self.schema, periods=periods))
+
+    def test_periods_reject_default_and_custom_missing_tokens(self):
+        for label in ("NA", " N/A ", "null"):
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, "periods cannot contain missing tokens"):
+                validate_schema(dict(self.schema, periods=[label]))
+        with self.assertRaisesRegex(ValueError, "periods cannot contain missing tokens"):
+            validate_schema(dict(self.schema, periods=[" missing "], missing_tokens=["\tmissing "]))
+
+    def test_period_missing_tokens_are_case_sensitive_and_overridable(self):
+        self.schema["periods"] = ["na"]
+        self.assertEqual(self.audit("A,na,2,0.1,CNY_million\n")["issues"], [])
+        self.schema["periods"] = ["NA"]
+        self.schema["missing_tokens"] = []
+        self.assertEqual(self.audit("A,NA,2,0.1,CNY_million\n")["issues"], [])
+
+    def test_invalid_period_schema_cli_exits_two_without_report(self):
+        self.schema["periods"] = ["NA"]
+        self.file.write_text("firm,year,profit,ratio,unit\nA,NA,2,0.1,CNY_million\n", encoding="utf-8")
+        schema_file = Path(self.temp.name) / "schema.json"
+        schema_file.write_text(json.dumps(self.schema), encoding="utf-8")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(main([str(self.file), "--schema", str(schema_file)]), 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("periods cannot contain missing tokens", stderr.getvalue())
+
     def test_wholly_absent_entity_has_all_gaps_without_inflating_count(self):
         self.schema["entities"] = ["A", "B"]
         report = self.audit("A,2021,2,0.1,CNY_million\nA,2022,3,0.2,CNY_million\n")
