@@ -19,6 +19,22 @@ def _decimal(value, label):
     return result
 
 
+def _canonical_json(value):
+    """Emit exact Decimal numbers without changing JSON number/string types."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("schema decimals must be finite")
+        return str(value)
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            json.dumps(key, ensure_ascii=False) + ":" + _canonical_json(value[key])
+            for key in sorted(value)
+        ) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def validate_schema(schema: object) -> dict:
     if not isinstance(schema, dict):
         raise ValueError("schema must be an object")
@@ -35,8 +51,9 @@ def validate_schema(schema: object) -> dict:
     periods = schema.get("periods")
     if not isinstance(periods, list) or not periods or any(not isinstance(p, str) or not p.strip() for p in periods):
         raise ValueError("periods must be a non-empty list of strings")
+    periods = [p.strip() for p in periods]
     if len(set(periods)) != len(periods):
-        raise ValueError("periods must be unique")
+        raise ValueError("periods must be unique after trimming")
     numeric = schema.get("numeric")
     if not isinstance(numeric, dict) or not numeric:
         raise ValueError("numeric must map at least one column to its rules")
@@ -56,6 +73,8 @@ def validate_schema(schema: object) -> dict:
     tokens = schema.get("missing_tokens", ["", "NA", "N/A", "null"])
     if not isinstance(tokens, list) or any(not isinstance(t, str) for t in tokens):
         raise ValueError("missing_tokens must be a list of strings")
+    if set(periods) & {t.strip() for t in tokens}:
+        raise ValueError("periods cannot contain missing tokens")
     if "entities" in schema:
         registry = schema["entities"]
         if not isinstance(registry, list) or not registry or any(
@@ -90,7 +109,8 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     values = defaultdict(lambda: defaultdict(list))
     missing = Counter()
     missing_tokens = {t.strip() for t in schema.get("missing_tokens", ["", "NA", "N/A", "null"])}
-    expected_periods = set(schema["periods"])
+    period_labels = [p.strip() for p in schema["periods"]]
+    expected_periods = set(period_labels)
     expected_entities = {e.strip() for e in schema["entities"]} if "entities" in schema else None
     row_count = 0
 
@@ -146,7 +166,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     gap_entities = set(entities) | (expected_entities or set())
     for entity in sorted(gap_entities):
         observed_periods = entities.get(entity, set())
-        gaps[entity] = [p for p in schema["periods"] if p not in observed_periods]
+        gaps[entity] = [p for p in period_labels if p not in observed_periods]
         if entity not in entities:
             issue("missing_entity", "no valid entity-period keys for expected entity",
                   entity=entity, severity="warning")
@@ -161,7 +181,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
         if constant:
             issue("no_within_variation", f"constant for {len(constant)} entities; inspect suitability for within estimators",
                   column=column, severity="warning")
-    canonical_schema = json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    canonical_schema = _canonical_json(schema).encode()
     return dict(version=1, ok=not any(i["severity"] == "error" for i in issues),
                 csv_sha256=hashlib.sha256(blob).hexdigest(), schema_sha256=hashlib.sha256(canonical_schema).hexdigest(),
                 row_count=row_count, entity_count=len(entities), unique_key_count=len(keys),
