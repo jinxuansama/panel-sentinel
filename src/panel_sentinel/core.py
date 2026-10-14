@@ -19,6 +19,22 @@ def _decimal(value, label):
     return result
 
 
+def _canonical_json(value):
+    """Emit exact Decimal numbers without changing JSON number/string types."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("schema decimals must be finite")
+        return str(value)
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            json.dumps(key, ensure_ascii=False) + ":" + _canonical_json(value[key])
+            for key in sorted(value)
+        ) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def validate_schema(schema: object) -> dict:
     if not isinstance(schema, dict):
         raise ValueError("schema must be an object")
@@ -35,8 +51,9 @@ def validate_schema(schema: object) -> dict:
     periods = schema.get("periods")
     if not isinstance(periods, list) or not periods or any(not isinstance(p, str) or not p.strip() for p in periods):
         raise ValueError("periods must be a non-empty list of strings")
+    periods = [p.strip() for p in periods]
     if len(set(periods)) != len(periods):
-        raise ValueError("periods must be unique")
+        raise ValueError("periods must be unique after trimming")
     numeric = schema.get("numeric")
     if not isinstance(numeric, dict) or not numeric:
         raise ValueError("numeric must map at least one column to its rules")
@@ -56,6 +73,8 @@ def validate_schema(schema: object) -> dict:
     tokens = schema.get("missing_tokens", ["", "NA", "N/A", "null"])
     if not isinstance(tokens, list) or any(not isinstance(t, str) for t in tokens):
         raise ValueError("missing_tokens must be a list of strings")
+    if set(periods) & {t.strip() for t in tokens}:
+        raise ValueError("periods cannot contain missing tokens")
     if "entities" in schema:
         registry = schema["entities"]
         if not isinstance(registry, list) or not registry or any(
@@ -77,8 +96,11 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     blob = path.read_bytes()
     # Decode once so the reported digest identifies precisely the checked bytes.
     import io
-    reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig"), newline=""))
-    headers = reader.fieldnames
+    reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig"), newline=""), strict=True)
+    try:
+        headers = reader.fieldnames
+    except csv.Error as exc:
+        raise ValueError(f"malformed CSV near physical line {reader.reader.line_num}: {exc}") from None
     if not headers or len(set(headers)) != len(headers):
         raise ValueError("CSV must have non-duplicate column headers")
     required = {schema["entity"], schema["period"]} | set(schema["numeric"]) | set(schema.get("units", {}))
@@ -90,55 +112,59 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     values = defaultdict(lambda: defaultdict(list))
     missing = Counter()
     missing_tokens = {t.strip() for t in schema.get("missing_tokens", ["", "NA", "N/A", "null"])}
-    expected_periods = set(schema["periods"])
+    period_labels = [p.strip() for p in schema["periods"]]
+    expected_periods = set(period_labels)
     expected_entities = {e.strip() for e in schema["entities"]} if "entities" in schema else None
     row_count = 0
 
     def issue(code, message, row=None, column=None, entity=None, severity="error"):
         issues.append(dict(code=code, message=message, row=row, column=column, entity=entity, severity=severity))
 
-    for record in reader:
-        row_count += 1
-        row = reader.line_num
-        if None in record or any(v is None for v in record.values()):
-            issue("malformed_row", "row width does not match header width", row)
-            continue
-        entity = record[schema["entity"]].strip()
-        period = record[schema["period"]].strip()
-        if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
-            issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
-        if entity in missing_tokens or period in missing_tokens:
-            issue("missing_key", "entity and period must be present", row)
-        else:
-            key = entity, period
-            if key in keys:
-                issue("duplicate_key", f"duplicate entity-period key; first ends at line {keys[key]}", row, entity=entity)
+    try:
+        for record in reader:
+            row_count += 1
+            row = reader.line_num
+            if None in record or any(v is None for v in record.values()):
+                issue("malformed_row", "row width does not match header width", row)
+                continue
+            entity = record[schema["entity"]].strip()
+            period = record[schema["period"]].strip()
+            if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
+                issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
+            if entity in missing_tokens or period in missing_tokens:
+                issue("missing_key", "entity and period must be present", row)
             else:
-                keys[key] = row
-            entities[entity].add(period)
-        if period not in expected_periods:
-            issue("unexpected_period", "period is outside the declared panel", row, schema["period"], entity)
-        for column, unit in schema.get("units", {}).items():
-            if record[column].strip() != unit:
-                issue("unit_mismatch", f"expected unit {unit!r}", row, column, entity)
-        for column, rules in schema["numeric"].items():
-            raw = record[column].strip()
-            if raw in missing_tokens:
-                missing[column] += 1
-                issue("missing_numeric", "numeric value is missing", row, column, entity)
-                continue
-            try:
-                value = _decimal(raw, column)
-            except ValueError:
-                issue("invalid_numeric", "value is not a finite number", row, column, entity)
-                continue
-            if not rules.get("allow_negative", True) and value < 0:
-                issue("negative_value", "negative value is prohibited by the schema", row, column, entity)
-            for bound, compare in (("min", lambda a, b: a < b), ("max", lambda a, b: a > b)):
-                if bound in rules and compare(value, _decimal(rules[bound], bound)):
-                    issue("out_of_bounds", f"value violates {bound}={rules[bound]}", row, column, entity)
-            if entity not in missing_tokens and period in expected_periods:
-                values[column][entity].append(value)
+                key = entity, period
+                if key in keys:
+                    issue("duplicate_key", f"duplicate entity-period key; first ends at line {keys[key]}", row, entity=entity)
+                else:
+                    keys[key] = row
+                entities[entity].add(period)
+            if period not in expected_periods:
+                issue("unexpected_period", "period is outside the declared panel", row, schema["period"], entity)
+            for column, unit in schema.get("units", {}).items():
+                if record[column].strip() != unit:
+                    issue("unit_mismatch", f"expected unit {unit!r}", row, column, entity)
+            for column, rules in schema["numeric"].items():
+                raw = record[column].strip()
+                if raw in missing_tokens:
+                    missing[column] += 1
+                    issue("missing_numeric", "numeric value is missing", row, column, entity)
+                    continue
+                try:
+                    value = _decimal(raw, column)
+                except ValueError:
+                    issue("invalid_numeric", "value is not a finite number", row, column, entity)
+                    continue
+                if not rules.get("allow_negative", True) and value < 0:
+                    issue("negative_value", "negative value is prohibited by the schema", row, column, entity)
+                for bound, compare in (("min", lambda a, b: a < b), ("max", lambda a, b: a > b)):
+                    if bound in rules and compare(value, _decimal(rules[bound], bound)):
+                        issue("out_of_bounds", f"value violates {bound}={rules[bound]}", row, column, entity)
+                if entity not in missing_tokens and period in expected_periods:
+                    values[column][entity].append(value)
+    except csv.Error as exc:
+        raise ValueError(f"malformed CSV near physical line {reader.reader.line_num}: {exc}") from None
 
     if not row_count:
         issue("empty_panel", "CSV contains no data rows")
@@ -146,7 +172,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     gap_entities = set(entities) | (expected_entities or set())
     for entity in sorted(gap_entities):
         observed_periods = entities.get(entity, set())
-        gaps[entity] = [p for p in schema["periods"] if p not in observed_periods]
+        gaps[entity] = [p for p in period_labels if p not in observed_periods]
         if entity not in entities:
             issue("missing_entity", "no valid entity-period keys for expected entity",
                   entity=entity, severity="warning")
@@ -161,7 +187,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
         if constant:
             issue("no_within_variation", f"constant for {len(constant)} entities; inspect suitability for within estimators",
                   column=column, severity="warning")
-    canonical_schema = json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    canonical_schema = _canonical_json(schema).encode()
     return dict(version=1, ok=not any(i["severity"] == "error" for i in issues),
                 csv_sha256=hashlib.sha256(blob).hexdigest(), schema_sha256=hashlib.sha256(canonical_schema).hexdigest(),
                 row_count=row_count, entity_count=len(entities), unique_key_count=len(keys),

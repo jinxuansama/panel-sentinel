@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Reject malformed CSV quoting detected by strict parsing instead of silently
+  changing numeric or key cells. Report contextual invalid-input errors and
+  preserve existing report files on CLI failure. Valid quoted/multiline input
+  and row-width diagnostics are unchanged.
+
 ## 0.2.0 — 2026-10-07
 
 Add an optional expected-entity registry to detect entities wholly absent from
