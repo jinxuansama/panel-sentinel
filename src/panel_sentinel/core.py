@@ -96,8 +96,11 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     blob = path.read_bytes()
     # Decode once so the reported digest identifies precisely the checked bytes.
     import io
-    reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig"), newline=""))
-    headers = reader.fieldnames
+    reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig"), newline=""), strict=True)
+    try:
+        headers = reader.fieldnames
+    except csv.Error as exc:
+        raise ValueError(f"malformed CSV near physical line {reader.reader.line_num}: {exc}") from None
     if not headers or len(set(headers)) != len(headers):
         raise ValueError("CSV must have non-duplicate column headers")
     required = {schema["entity"], schema["period"]} | set(schema["numeric"]) | set(schema.get("units", {}))
@@ -117,48 +120,51 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
     def issue(code, message, row=None, column=None, entity=None, severity="error"):
         issues.append(dict(code=code, message=message, row=row, column=column, entity=entity, severity=severity))
 
-    for record in reader:
-        row_count += 1
-        row = reader.line_num
-        if None in record or any(v is None for v in record.values()):
-            issue("malformed_row", "row width does not match header width", row)
-            continue
-        entity = record[schema["entity"]].strip()
-        period = record[schema["period"]].strip()
-        if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
-            issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
-        if entity in missing_tokens or period in missing_tokens:
-            issue("missing_key", "entity and period must be present", row)
-        else:
-            key = entity, period
-            if key in keys:
-                issue("duplicate_key", f"duplicate entity-period key; first ends at line {keys[key]}", row, entity=entity)
+    try:
+        for record in reader:
+            row_count += 1
+            row = reader.line_num
+            if None in record or any(v is None for v in record.values()):
+                issue("malformed_row", "row width does not match header width", row)
+                continue
+            entity = record[schema["entity"]].strip()
+            period = record[schema["period"]].strip()
+            if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
+                issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
+            if entity in missing_tokens or period in missing_tokens:
+                issue("missing_key", "entity and period must be present", row)
             else:
-                keys[key] = row
-            entities[entity].add(period)
-        if period not in expected_periods:
-            issue("unexpected_period", "period is outside the declared panel", row, schema["period"], entity)
-        for column, unit in schema.get("units", {}).items():
-            if record[column].strip() != unit:
-                issue("unit_mismatch", f"expected unit {unit!r}", row, column, entity)
-        for column, rules in schema["numeric"].items():
-            raw = record[column].strip()
-            if raw in missing_tokens:
-                missing[column] += 1
-                issue("missing_numeric", "numeric value is missing", row, column, entity)
-                continue
-            try:
-                value = _decimal(raw, column)
-            except ValueError:
-                issue("invalid_numeric", "value is not a finite number", row, column, entity)
-                continue
-            if not rules.get("allow_negative", True) and value < 0:
-                issue("negative_value", "negative value is prohibited by the schema", row, column, entity)
-            for bound, compare in (("min", lambda a, b: a < b), ("max", lambda a, b: a > b)):
-                if bound in rules and compare(value, _decimal(rules[bound], bound)):
-                    issue("out_of_bounds", f"value violates {bound}={rules[bound]}", row, column, entity)
-            if entity not in missing_tokens and period in expected_periods:
-                values[column][entity].append(value)
+                key = entity, period
+                if key in keys:
+                    issue("duplicate_key", f"duplicate entity-period key; first ends at line {keys[key]}", row, entity=entity)
+                else:
+                    keys[key] = row
+                entities[entity].add(period)
+            if period not in expected_periods:
+                issue("unexpected_period", "period is outside the declared panel", row, schema["period"], entity)
+            for column, unit in schema.get("units", {}).items():
+                if record[column].strip() != unit:
+                    issue("unit_mismatch", f"expected unit {unit!r}", row, column, entity)
+            for column, rules in schema["numeric"].items():
+                raw = record[column].strip()
+                if raw in missing_tokens:
+                    missing[column] += 1
+                    issue("missing_numeric", "numeric value is missing", row, column, entity)
+                    continue
+                try:
+                    value = _decimal(raw, column)
+                except ValueError:
+                    issue("invalid_numeric", "value is not a finite number", row, column, entity)
+                    continue
+                if not rules.get("allow_negative", True) and value < 0:
+                    issue("negative_value", "negative value is prohibited by the schema", row, column, entity)
+                for bound, compare in (("min", lambda a, b: a < b), ("max", lambda a, b: a > b)):
+                    if bound in rules and compare(value, _decimal(rules[bound], bound)):
+                        issue("out_of_bounds", f"value violates {bound}={rules[bound]}", row, column, entity)
+                if entity not in missing_tokens and period in expected_periods:
+                    values[column][entity].append(value)
+    except csv.Error as exc:
+        raise ValueError(f"malformed CSV near physical line {reader.reader.line_num}: {exc}") from None
 
     if not row_count:
         issue("empty_panel", "CSV contains no data rows")

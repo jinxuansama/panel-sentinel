@@ -46,6 +46,11 @@ Additional CSV columns are allowed and ignored unless declared in the schema.
 Diagnostics report the CSV physical line at which a record ends, which can
 differ from its logical row for quoted multiline fields. Duplicate headers
 are invalid input, and short/long records are errors. Empty panels fail.
+The standard-library CSV parser runs in strict mode: malformed quoting detected
+by that parser, including unterminated fields and text after a closing quote,
+raises a contextual ValueError with the physical line reached. This is not a
+claim of full RFC conformance. The CLI exits 2 without creating or overwriting
+a report; valid escaped quotes and multiline fields remain supported.
 The unit check validates a label, not the arithmetic scale of its numbers.
 
 CSV digest covers exact bytes; schema digest covers sorted compact UTF-8

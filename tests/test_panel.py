@@ -274,5 +274,68 @@ class ExactBoundsTests(unittest.TestCase):
         self.assertEqual(json.loads(json.dumps(report)), report)
 
 
+
+class CsvSyntaxTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.csv = Path(self.temp.name) / "panel.csv"
+        self.schema = dict(version=1, entity="firm", period="year", periods=["2021"],
+                           numeric={"profit": {}})
+
+    def test_malformed_quoted_rows_are_invalid_input(self):
+        for body in ('A,2021,"2"0\n', 'A,2021,"2\n',
+                     '"A"tail,2021,2\n', '"A,2021,2\n'):
+            with self.subTest(body=body):
+                self.csv.write_text("firm,year,profit\n" + body, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "malformed CSV.*physical line"):
+                    audit_csv(self.csv, self.schema)
+
+    def test_malformed_quoted_headers_are_invalid_input(self):
+        for header in ('firm,year,"profit"suffix\n', 'firm,year,"profit\n'):
+            with self.subTest(header=header):
+                self.csv.write_text(header, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "malformed CSV.*physical line"):
+                    audit_csv(self.csv, self.schema)
+
+    def test_valid_quotes_multiline_fields_and_physical_lines(self):
+        self.csv.write_text('firm,year,profit\n"A,\n""Ltd""",2021,"2"\n'
+                            '"A,\n""Ltd""",2021,"3"\n', encoding="utf-8")
+        report = audit_csv(self.csv, self.schema)
+        self.assertEqual(report["row_count"], 2)
+        duplicates = [i for i in report["issues"] if i["code"] == "duplicate_key"]
+        self.assertEqual(len(duplicates), 1)
+        self.assertEqual(duplicates[0]["row"], 5)
+        self.assertIn("first ends at line 3", duplicates[0]["message"])
+        self.assertEqual(report, audit_csv(self.csv, self.schema))
+
+    def test_valid_quoted_input_without_final_newline(self):
+        self.csv.write_text('\ufeff"firm","year","profit"\r\n"A","2021","2"',
+                            encoding="utf-8")
+        report = audit_csv(self.csv, self.schema)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["issues"], [])
+
+    def test_cli_malformed_csv_does_not_create_or_overwrite_report(self):
+        self.csv.write_text('firm,year,profit\nA,2021,"2"0\n', encoding="utf-8")
+        schema_file = Path(self.temp.name) / "schema.json"
+        schema_file.write_text(json.dumps(self.schema), encoding="utf-8")
+        output_file = Path(self.temp.name) / "report.json"
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                if existing:
+                    output_file.write_text("previous report", encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    code = main([str(self.csv), "--schema", str(schema_file),
+                                 "--output", str(output_file)])
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn("malformed CSV", stderr.getvalue())
+                if existing:
+                    self.assertEqual(output_file.read_text(encoding="utf-8"), "previous report")
+                else:
+                    self.assertFalse(output_file.exists())
+
 if __name__ == "__main__":
     unittest.main()
