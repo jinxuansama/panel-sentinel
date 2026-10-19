@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Treat blank entity and period keys as missing even when custom missing tokens
+  omit the empty string; exclude those rows from observed keys and variation.
 - Reject malformed CSV quoting detected by strict parsing instead of silently
   changing numeric or key cells. Report contextual invalid-input errors and
   preserve existing report files on CLI failure. Valid quoted/multiline input

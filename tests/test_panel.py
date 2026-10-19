@@ -43,6 +43,43 @@ class PanelTests(unittest.TestCase):
     def test_missing_cells(self):
         self.assertIn("missing_numeric", self.codes(self.audit("A,2021,,0.1,CNY_million\n")))
 
+    def test_blank_entity_is_missing_even_with_custom_missing_tokens(self):
+        for tokens in ([], ["NA"]):
+            for entity in ("", " \t "):
+                with self.subTest(tokens=tokens, entity=entity):
+                    self.schema["missing_tokens"] = tokens
+                    report = self.audit(f"{entity},2021,2,0.1,CNY_million\n"
+                                        "A,2021,3,0.2,CNY_million\n")
+                    self.assertFalse(report["ok"])
+                    self.assertIn("missing_key", self.codes(report))
+                    self.assertEqual(report["entity_count"], 1)
+                    self.assertEqual(report["unique_key_count"], 1)
+                    self.assertEqual(report["gaps"], {"A": ["2022"]})
+                    self.assertEqual(report["within_variation"]["profit"]["entities_with_two_observations"], 0)
+
+    def test_blank_keys_do_not_become_unexpected_registry_entities(self):
+        self.schema["missing_tokens"] = []
+        self.schema["entities"] = ["A"]
+        for body in (",2021,2,0.1,CNY_million\n", "A,,2,0.1,CNY_million\n"):
+            with self.subTest(body=body):
+                report = self.audit(body)
+                self.assertIn("missing_key", self.codes(report))
+                self.assertNotIn("unexpected_entity", self.codes(report))
+                self.assertEqual(report["entity_count"], 0)
+                self.assertEqual(report["unique_key_count"], 0)
+
+    def test_cli_blank_entity_is_an_audit_failure_with_report(self):
+        self.schema["missing_tokens"] = []
+        self.audit(",2021,2,0.1,CNY_million\n")
+        schema_file = Path(self.temp.name) / "schema.json"
+        schema_file.write_text(json.dumps(self.schema), encoding="utf-8")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = main([str(self.file), "--schema", str(schema_file)])
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn("missing_key", self.codes(json.loads(stdout.getvalue())))
+
     def test_malformed_row(self):
         self.assertIn("malformed_row", self.codes(self.audit("A,2021,2,0.1,CNY_million,extra\n")))
 

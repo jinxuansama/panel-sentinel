@@ -129,9 +129,11 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
                 continue
             entity = record[schema["entity"]].strip()
             period = record[schema["period"]].strip()
-            if expected_entities is not None and entity not in missing_tokens and entity not in expected_entities:
+            entity_missing = not entity or entity in missing_tokens
+            period_missing = not period or period in missing_tokens
+            if expected_entities is not None and not entity_missing and entity not in expected_entities:
                 issue("unexpected_entity", "entity is outside the declared panel", row, schema["entity"], entity)
-            if entity in missing_tokens or period in missing_tokens:
+            if entity_missing or period_missing:
                 issue("missing_key", "entity and period must be present", row)
             else:
                 key = entity, period
@@ -161,7 +163,7 @@ def audit_csv(csv_path: str | Path, schema: dict) -> dict:
                 for bound, compare in (("min", lambda a, b: a < b), ("max", lambda a, b: a > b)):
                     if bound in rules and compare(value, _decimal(rules[bound], bound)):
                         issue("out_of_bounds", f"value violates {bound}={rules[bound]}", row, column, entity)
-                if entity not in missing_tokens and period in expected_periods:
+                if not entity_missing and not period_missing and period in expected_periods:
                     values[column][entity].append(value)
     except csv.Error as exc:
         raise ValueError(f"malformed CSV near physical line {reader.reader.line_num}: {exc}") from None

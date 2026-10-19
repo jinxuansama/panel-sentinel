@@ -15,6 +15,11 @@ numeric rules are rejected to catch spelling errors.
 | units | {"money_unit": "CNY_million"} | Every row must match the declared unit label exactly after trimming |
 | missing_tokens | ["", "NA", "N/A", "null"] | Case-sensitive, trimmed missing markers; these are the defaults |
 
+Entity and period keys must be non-empty after trimming, even when a custom
+`missing_tokens` list omits `""`. Blank keys produce `missing_key` errors and
+do not count as observed entity-period pairs or within-entity observations.
+Configured tokens still control non-empty labels such as `"NA"`.
+
 Period labels are case-sensitive. Leading and trailing whitespace is ignored
 in both the schema and CSV; internal whitespace is preserved. Labels that
 become duplicates after trimming, or match a configured missing token, are
