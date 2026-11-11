@@ -31,9 +31,10 @@ assets, missing/NaN values, and panel gaps. All firms and values are synthetic.
 
 ```python
 import json
+from decimal import Decimal
 from panel_sentinel.core import audit_csv
 with open("examples/schema.json") as f:
-    report = audit_csv("examples/clean.csv", json.load(f))
+    report = audit_csv("examples/clean.csv", json.load(f, parse_float=Decimal))
 assert report["ok"]
 ```
 
