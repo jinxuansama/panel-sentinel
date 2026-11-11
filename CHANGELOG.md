@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Normalize expected period labels after trimming, reject labels that become
+  duplicates or conflict with missing tokens, and preserve the declared order
+  in gap reports.
+- Parse fractional and exponent-form JSON bounds as exact decimals. Preserve
+  JSON number/string types in the canonical schema digest; hashes can differ
+  from earlier versions that rounded or reformatted those numbers as floats.
 - Treat blank entity and period keys as missing even when custom missing tokens
   omit the empty string; exclude those rows from observed keys and variation.
 - Reject malformed CSV quoting detected by strict parsing instead of silently
